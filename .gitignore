@@ -1,4 +1,4 @@
-﻿__pycache__/
+__pycache__/
 *.pyc
 .pytest_cache/
 node_modules/
@@ -6,3 +6,6 @@ node_modules/
 *.egg-info/
 dist/
 build/
+data/airfoils/
+
+test_output.txt
