@@ -103,8 +103,7 @@ This mirrors the `finalize_design` output from the Phase 3 LangGraph layer (see 
 
 | Code | Meaning |
 |---|---|
-| `400` | Malformed `competition_rules` (e.g. missing MTOW_kg) |
-| `422` | Custom `.dat` file failed `validate_dat_file()` — response includes which file and why (chord/count/range check that failed) |
+| `422` | Request validation failure — either malformed `competition_rules` (e.g. missing `MTOW_kg`) or a custom `.dat` file that failed `validate_dat_file()`. Response includes which field/file failed and why. |
 | `500` | Unhandled backend error — should be rare given Phase 3's "never crash, log violations instead" design principle |
 
 ---
