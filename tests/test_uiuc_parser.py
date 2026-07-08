@@ -22,6 +22,7 @@ from airfoil_engine.uiuc_parser import (
     AirfoilGeometry,
     fetch_airfoil,
     parse_dat_file,
+    validate_dat_file,
 )
 
 
@@ -124,21 +125,117 @@ def test_parse_dat_file_directly(tmp_path: Path):
 # Unit test: caching behaviour
 # ---------------------------------------------------------------------------
 
+from unittest.mock import patch
+
 @pytest.mark.network
 def test_fetch_caches_file(tmp_path: Path):
     """Second fetch should use cached file, not re-download."""
     cache = tmp_path / "airfoil_cache"
 
-    # First fetch — downloads
-    geom1 = fetch_airfoil("n0012", cache_dir=cache)
-    dat_file = cache / "n0012.dat"
-    assert dat_file.exists(), "File should be cached after first fetch"
-    mtime1 = dat_file.stat().st_mtime
+    def mock_urlretrieve(url, path):
+        Path(path).write_text(
+            "Mock Airfoil\n"
+            "  1.0000   0.0000\n"
+            "  0.7500   0.0300\n"
+            "  0.5000   0.0500\n"
+            "  0.2500   0.0300\n"
+            "  0.0000   0.0000\n"
+            "  0.2500  -0.0300\n"
+            "  0.5000  -0.0500\n"
+            "  0.7500  -0.0300\n"
+            "  1.0000   0.0000\n"
+        )
 
-    # Second fetch — should use cache (same mtime)
-    geom2 = fetch_airfoil("n0012", cache_dir=cache)
-    mtime2 = dat_file.stat().st_mtime
+    with patch("airfoil_engine.uiuc_parser.urlretrieve", side_effect=mock_urlretrieve) as mock_retrieve:
+        # First fetch — downloads (triggers mock_urlretrieve which writes .dat.raw)
+        # Note: fetch_airfoil handles the renaming/rewriting internally
+        geom1 = fetch_airfoil("n0012", cache_dir=cache)
+        dat_file = cache / "n0012.dat"
+        assert dat_file.exists(), "File should be cached after first fetch"
+        mtime1 = dat_file.stat().st_mtime
+        assert mock_retrieve.call_count == 1
 
-    assert mtime1 == mtime2, "Cached file should not be re-downloaded"
-    assert geom1.name == geom2.name
-    assert geom1.thickness_ratio == pytest.approx(geom2.thickness_ratio, abs=1e-6)
+        # Second fetch — should use cache (same mtime)
+        geom2 = fetch_airfoil("n0012", cache_dir=cache)
+        mtime2 = dat_file.stat().st_mtime
+        assert mock_retrieve.call_count == 1
+
+        assert mtime1 == mtime2, "Cached file should not be re-downloaded"
+        assert geom1.name == geom2.name
+        assert geom1.thickness_ratio == pytest.approx(geom2.thickness_ratio, abs=1e-6)
+
+
+
+# ---------------------------------------------------------------------------
+# Unit test: validate_dat_file
+# ---------------------------------------------------------------------------
+
+def test_validate_dat_file(tmp_path: Path):
+    """Verify validate_dat_file detects valid/invalid airfoil data."""
+    # 1. Non-existent file
+    assert not validate_dat_file(tmp_path / "nonexistent.dat")
+
+    # 2. Sane valid Selig file
+    valid_content = (
+        "Valid Airfoil\n"
+        "  1.0000   0.0050\n"
+        "  0.7500   0.0350\n"
+        "  0.5000   0.0500\n"
+        "  0.2500   0.0350\n"
+        "  0.0000   0.0000\n"
+        "  0.2500  -0.0350\n"
+        "  0.5000  -0.0500\n"
+        "  0.7500  -0.0350\n"
+        "  1.0000  -0.0050\n"
+    )
+    valid_file = tmp_path / "valid.dat"
+    valid_file.write_text(valid_content)
+    assert validate_dat_file(valid_file)
+
+    # 3. Too few points
+    too_few_content = (
+        "Too Few Points\n"
+        "  1.0000   0.0050\n"
+        "  0.0000   0.0000\n"
+        "  1.0000  -0.0050\n"
+    )
+    too_few_file = tmp_path / "too_few.dat"
+    too_few_file.write_text(too_few_content)
+    assert not validate_dat_file(too_few_file)
+
+    # 4. Out-of-bounds coordinates (x > 1.05 or y > 0.5)
+    out_of_bounds_content = (
+        "Out of Bounds\n"
+        "  1.0000   0.0050\n"
+        "  0.5000   0.6000\n"  # y = 0.6 is too high
+        "  0.0000   0.0000\n"
+        "  0.5000  -0.0500\n"
+        "  1.0000  -0.0050\n"
+        "  0.5000   0.0500\n"
+        "  0.2500   0.0350\n"
+        "  0.2500  -0.0350\n"
+        "  0.7500   0.0200\n"
+        "  0.7500  -0.0200\n"
+    )
+    out_of_bounds_file = tmp_path / "out_of_bounds.dat"
+    out_of_bounds_file.write_text(out_of_bounds_content)
+    assert not validate_dat_file(out_of_bounds_file)
+
+    # 5. Bad chord length
+    bad_chord_content = (
+        "Bad Chord\n"
+        "  0.5000   0.0050\n"  # max x is 0.5, so chord is 0.5 (should be ~1.0)
+        "  0.2500   0.0500\n"
+        "  0.0000   0.0000\n"
+        "  0.2500  -0.0500\n"
+        "  0.5000  -0.0050\n"
+        "  0.1000   0.0100\n"
+        "  0.1000  -0.0100\n"
+        "  0.3000   0.0200\n"
+        "  0.3000  -0.0200\n"
+        "  0.4000   0.0100\n"
+    )
+    bad_chord_file = tmp_path / "bad_chord.dat"
+    bad_chord_file.write_text(bad_chord_content)
+    assert not validate_dat_file(bad_chord_file)
+

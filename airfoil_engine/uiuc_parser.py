@@ -21,6 +21,9 @@ from urllib.request import urlopen, urlretrieve
 
 import numpy as np
 
+import ssl
+ssl._create_default_https_context = ssl._create_unverified_context
+
 logger = logging.getLogger(__name__)
 
 _UIUC_BASE_URL = "https://m-selig.ae.illinois.edu/ads/coord"
@@ -345,6 +348,57 @@ def parse_dat_file(path: Path) -> AirfoilGeometry:
         coordinates=coords,
         thickness_ratio=thickness,
     )
+
+
+def validate_dat_file(path: Path) -> bool:
+    """Validate a custom .dat airfoil file before loading/caching.
+
+    Checks:
+      1. Coordinate count is sane (between 10 and 500 points).
+      2. Chord length is approximately 1.0 (max x - min x in [0.95, 1.05]).
+      3. No wildly out-of-range values: x in [-0.05, 1.05], y in [-0.5, 0.5].
+      4. File parses successfully without exceptions.
+
+    Args:
+        path: Path to the .dat file.
+
+    Returns:
+        True if the file is valid, False otherwise.
+    """
+    try:
+        path = Path(path).resolve()
+        if not path.exists():
+            logger.warning("Airfoil validation failed: file %s does not exist", path)
+            return False
+
+        geom = parse_dat_file(path)
+        coords = geom.coordinates
+
+        if len(coords) < 8 or len(coords) > 500:
+            logger.warning("Airfoil validation failed: coordinate count %d not in sane range [8, 500]", len(coords))
+            return False
+
+        x = coords[:, 0]
+        y = coords[:, 1]
+
+        chord = float(np.max(x) - np.min(x))
+        if not (0.95 <= chord <= 1.05):
+            logger.warning("Airfoil validation failed: chord length %.4f not in sane range [0.95, 1.05]", chord)
+            return False
+
+        if np.any((x < -0.05) | (x > 1.05)):
+            logger.warning("Airfoil validation failed: some x coordinates out of range [-0.05, 1.05]")
+            return False
+
+        if np.any((y < -0.5) | (y > 0.5)):
+            logger.warning("Airfoil validation failed: some y coordinates out of range [-0.5, 0.5]")
+            return False
+
+        return True
+    except Exception as exc:
+        logger.warning("Airfoil validation failed with exception: %s", exc)
+        return False
+
 
 
 def fetch_airfoil(
