@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
+from fastapi.responses import StreamingResponse
 
 from api.database import get_design_by_id, get_design_history, save_design
 from api.schemas import DesignRequest, DesignResponse
@@ -57,81 +58,15 @@ def _get_dat_validation_error_reason(path: Path) -> str:
         return f"format parse error: {str(exc)}"
 
 
-def _run_design_optimization_sync(request: DesignRequest) -> Dict[str, Any]:
-    """Synchronous helper function containing the core design agent workflow execution and DB saving."""
-    rules_req = request.competition_rules
-    project_root = Path(__file__).resolve().parent.parent
-    
-    # 1. Validate custom dat files if supplied
-    for path_str in rules_req.custom_airfoil_paths:
-        path = Path(path_str)
-        if not path.is_absolute():
-            path = (project_root / path).resolve()
-        else:
-            path = path.resolve()
-            
-        # Call validate_dat_file exactly as requested
-        if not validate_dat_file(path):
-            reason = _get_dat_validation_error_reason(path)
-            logger.warning("Custom dat file %s failed validation: %s", path_str, reason)
-            raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-                detail={
-                    "error": "Custom airfoil .dat file validation failed",
-                    "file": path_str,
-                    "reason": reason,
-                },
-            )
-
-    # 2. Prepare inputs for the Phase 3 LangGraph design agent
-    inputs = {
-        "payload_kg": rules_req.payload_kg,
-        "mtow_limit_kg": rules_req.MTOW_kg,
-        "wingspan_limit_m": rules_req.max_wingspan_m,
-        "power_limit_W": rules_req.max_power_W,
-        "stall_speed_limit_ms": rules_req.min_stall_speed_ms,
-        "V_cruise_target_ms": rules_req.target_cruise_speed_ms,
-        "candidate_airfoils": list(DEFAULT_CANDIDATES) + rules_req.custom_airfoil_paths,
-        "max_iterations": request.max_iterations,
-        "use_llm": request.use_llm,
-    }
-
-    # 3. Stream graph execution to capture iteration-by-iteration reasoning and design variables
-    workflow = build_graph()
-    app = workflow.compile()
-
-    final_state = {}
-    reasoning_by_iter: Dict[int, str] = {}
-    airfoil_cl_max: Dict[str, float] = {"clarky": 1.393, "n0012": 1.085} # seed defaults
-    airfoil_cd0: Dict[str, float] = {"clarky": 0.0102, "n0012": 0.0114}
-
-    try:
-        for chunk in app.stream(inputs):
-            for node_name, state_update in chunk.items():
-                final_state.update(state_update)
-                
-                # Capture airfoil metadata when evaluated
-                if node_name == "select_airfoil":
-                    airfoil_id = state_update.get("airfoil_id")
-                    if airfoil_id:
-                        if "CL_max" in state_update:
-                            airfoil_cl_max[airfoil_id] = state_update["CL_max"]
-                        if "CD0" in state_update:
-                            airfoil_cd0[airfoil_id] = state_update["CD0"]
-
-                # Capture reasoning for adjustments
-                if node_name == "adjust_design":
-                    iter_num = state_update.get("iteration")
-                    reasoning = state_update.get("reasoning", "")
-                    reasoning_by_iter[iter_num] = reasoning
-
-    except Exception as exc:
-        logger.error("Design agent execution failed: %s", exc, exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unhandled backend optimization error: {str(exc)}",
-        )
-
+def _build_design_response(
+    final_state: dict,
+    rules_req: Any,
+    inputs: dict,
+    reasoning_by_iter: Dict[int, str],
+    airfoil_cl_max: Dict[str, float],
+    airfoil_cd0: Dict[str, float],
+) -> dict:
+    """Helper to map final state to the contract-compliant response shape."""
     # 4. Map final state to the contract-compliant response shape
     converged = final_state.get("converged", False)
     iterations_used = final_state.get("iteration", 0)
@@ -296,20 +231,108 @@ def _run_design_optimization_sync(request: DesignRequest) -> Dict[str, Any]:
         "airfoil_selection_reasoning": airfoil_selection_reasoning,
     }
 
+    return response_payload
+
+
+def _run_design_optimization_sync(request: DesignRequest) -> Dict[str, Any]:
+    """Synchronous helper function containing the core design agent workflow execution and DB saving."""
+    rules_req = request.competition_rules
+    project_root = Path(__file__).resolve().parent.parent
+    
+    # 1. Validate custom dat files if supplied
+    for path_str in rules_req.custom_airfoil_paths:
+        path = Path(path_str)
+        if not path.is_absolute():
+            path = (project_root / path).resolve()
+        else:
+            path = path.resolve()
+            
+        # Call validate_dat_file exactly as requested
+        if not validate_dat_file(path):
+            reason = _get_dat_validation_error_reason(path)
+            logger.warning("Custom dat file %s failed validation: %s", path_str, reason)
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail={
+                    "error": "Custom airfoil .dat file validation failed",
+                    "file": path_str,
+                    "reason": reason,
+                },
+            )
+
+    # 2. Prepare inputs for the Phase 3 LangGraph design agent
+    inputs = {
+        "payload_kg": rules_req.payload_kg,
+        "mtow_limit_kg": rules_req.MTOW_kg,
+        "wingspan_limit_m": rules_req.max_wingspan_m,
+        "power_limit_W": rules_req.max_power_W,
+        "stall_speed_limit_ms": rules_req.min_stall_speed_ms,
+        "V_cruise_target_ms": rules_req.target_cruise_speed_ms,
+        "candidate_airfoils": list(DEFAULT_CANDIDATES) + rules_req.custom_airfoil_paths,
+        "max_iterations": request.max_iterations,
+        "use_llm": request.use_llm,
+    }
+
+    # 3. Stream graph execution to capture iteration-by-iteration reasoning and design variables
+    workflow = build_graph()
+    app = workflow.compile()
+
+    final_state = {}
+    reasoning_by_iter: Dict[int, str] = {}
+    airfoil_cl_max: Dict[str, float] = {"clarky": 1.393, "n0012": 1.085} # seed defaults
+    airfoil_cd0: Dict[str, float] = {"clarky": 0.0102, "n0012": 0.0114}
+
+    try:
+        for chunk in app.stream(inputs):
+            for node_name, state_update in chunk.items():
+                final_state.update(state_update)
+                
+                # Capture airfoil metadata when evaluated
+                if node_name == "select_airfoil":
+                    airfoil_id = state_update.get("airfoil_id")
+                    if airfoil_id:
+                        if "CL_max" in state_update:
+                            airfoil_cl_max[airfoil_id] = state_update["CL_max"]
+                        if "CD0" in state_update:
+                            airfoil_cd0[airfoil_id] = state_update["CD0"]
+
+                # Capture reasoning for adjustments
+                if node_name == "adjust_design":
+                    iter_num = state_update.get("iteration")
+                    reasoning = state_update.get("reasoning", "")
+                    reasoning_by_iter[iter_num] = reasoning
+
+    except Exception as exc:
+        logger.error("Design agent execution failed: %s", exc, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unhandled backend optimization error: {str(exc)}",
+        )
+
+    # 4. Map final state to the contract-compliant response shape using helper
+    response_payload = _build_design_response(
+        final_state=final_state,
+        rules_req=rules_req,
+        inputs=inputs,
+        reasoning_by_iter=reasoning_by_iter,
+        airfoil_cl_max=airfoil_cl_max,
+        airfoil_cd0=airfoil_cd0
+    )
+
     # 5. Persist design to SQLite database
     try:
         save_design(
-            design_id=design_id,
-            created_at=created_at,
+            design_id=response_payload["id"],
+            created_at=response_payload["created_at"],
             payload_kg=rules_req.payload_kg,
             mtow_limit_kg=rules_req.MTOW_kg,
             wingspan_limit_m=rules_req.max_wingspan_m,
-            status=status_str,
-            converged=converged,
+            status=response_payload["status"],
+            converged=response_payload["converged"],
             response_json=json.dumps(response_payload),
         )
     except Exception as exc:
-        logger.error("Failed to save design %s to SQLite: %s", design_id, exc)
+        logger.error("Failed to save design %s to SQLite: %s", response_payload["id"], exc)
 
     return response_payload
 

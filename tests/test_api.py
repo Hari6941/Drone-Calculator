@@ -245,3 +245,44 @@ def test_cors_origins(client):
     response = client.get("/", headers=headers_disallowed)
     assert response.headers.get("access-control-allow-origin") is None
 
+
+def test_design_stream_success(client):
+    """Verify that POST /api/v1/design/stream returns a text/event-stream containing node updates and complete status."""
+    import json
+    payload = {
+        "competition_rules": {
+            "MTOW_kg": 4.0,
+            "payload_kg": 1.2,
+            "max_wingspan_m": 1.8,
+            "KV_rating": 800,
+            "max_power_W": 300,
+            "min_stall_speed_ms": 12.0,
+            "target_cruise_speed_ms": 16.0,
+            "custom_airfoil_paths": []
+        },
+        "use_llm": False,
+        "max_iterations": 2
+    }
+
+    response = client.post("/api/v1/design/stream", json=payload)
+    assert response.status_code == 200
+    assert "text/event-stream" in response.headers.get("content-type", "")
+
+    events = []
+    for line in response.iter_lines():
+        if line:
+            line_str = line.decode("utf-8") if isinstance(line, bytes) else line
+            if line_str.startswith("data: "):
+                event_data = json.loads(line_str[6:])
+                events.append(event_data)
+
+    # Check that we received event data and a 'complete' event containing the result payload
+    assert len(events) > 0
+    complete_event = next((e for e in events if e.get("type") == "complete"), None)
+    assert complete_event is not None
+    result = complete_event["result"]
+    assert "id" in result
+    assert "status" in result
+    assert result["converged"] is True
+
+
