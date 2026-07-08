@@ -131,34 +131,37 @@ from unittest.mock import patch
 def test_fetch_caches_file(tmp_path: Path):
     """Second fetch should use cached file, not re-download."""
     cache = tmp_path / "airfoil_cache"
+    from unittest.mock import MagicMock
 
-    def mock_urlretrieve(url, path):
-        Path(path).write_text(
-            "Mock Airfoil\n"
-            "  1.0000   0.0000\n"
-            "  0.7500   0.0300\n"
-            "  0.5000   0.0500\n"
-            "  0.2500   0.0300\n"
-            "  0.0000   0.0000\n"
-            "  0.2500  -0.0300\n"
-            "  0.5000  -0.0500\n"
-            "  0.7500  -0.0300\n"
-            "  1.0000   0.0000\n"
+    def mock_urlopen(url):
+        mock_response = MagicMock()
+        mock_response.read.return_value = (
+            b"Mock Airfoil\n"
+            b"  1.0000   0.0000\n"
+            b"  0.7500   0.0300\n"
+            b"  0.5000   0.0500\n"
+            b"  0.2500   0.0300\n"
+            b"  0.0000   0.0000\n"
+            b"  0.2500  -0.0300\n"
+            b"  0.5000  -0.0500\n"
+            b"  0.7500  -0.0300\n"
+            b"  1.0000   0.0000\n"
         )
+        mock_response.__enter__.return_value = mock_response
+        return mock_response
 
-    with patch("airfoil_engine.uiuc_parser.urlretrieve", side_effect=mock_urlretrieve) as mock_retrieve:
-        # First fetch — downloads (triggers mock_urlretrieve which writes .dat.raw)
-        # Note: fetch_airfoil handles the renaming/rewriting internally
+    with patch("airfoil_engine.uiuc_parser.urlopen", side_effect=mock_urlopen) as mock_open:
+        # First fetch — downloads (triggers mock_urlopen which returns the mock response bytes)
         geom1 = fetch_airfoil("n0012", cache_dir=cache)
         dat_file = cache / "n0012.dat"
         assert dat_file.exists(), "File should be cached after first fetch"
         mtime1 = dat_file.stat().st_mtime
-        assert mock_retrieve.call_count == 1
+        assert mock_open.call_count == 1
 
         # Second fetch — should use cache (same mtime)
         geom2 = fetch_airfoil("n0012", cache_dir=cache)
         mtime2 = dat_file.stat().st_mtime
-        assert mock_retrieve.call_count == 1
+        assert mock_open.call_count == 1
 
         assert mtime1 == mtime2, "Cached file should not be re-downloaded"
         assert geom1.name == geom2.name

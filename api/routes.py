@@ -4,6 +4,7 @@ routes.py
 FastAPI route handlers for design optimization and design history endpoints.
 """
 
+import asyncio
 import datetime
 import json
 import logging
@@ -22,6 +23,8 @@ from physics_engine import G
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1")
+
+_design_lock = asyncio.Lock()
 
 # Helper to inspect why a dat file failed validation
 def _get_dat_validation_error_reason(path: Path) -> str:
@@ -54,27 +57,25 @@ def _get_dat_validation_error_reason(path: Path) -> str:
         return f"format parse error: {str(exc)}"
 
 
-@router.post(
-    "/design",
-    response_model=DesignResponse,
-    status_code=status.HTTP_200_OK,
-    summary="Optimize a new UAV design from competition rules",
-)
-def create_design(request: DesignRequest):
-    """Triggers the LangGraph optimization agent to converge on a design spec
-    satisfying the given competition constraints.
-    """
+def _run_design_optimization_sync(request: DesignRequest) -> Dict[str, Any]:
+    """Synchronous helper function containing the core design agent workflow execution and DB saving."""
     rules_req = request.competition_rules
+    project_root = Path(__file__).resolve().parent.parent
     
     # 1. Validate custom dat files if supplied
     for path_str in rules_req.custom_airfoil_paths:
         path = Path(path_str)
+        if not path.is_absolute():
+            path = (project_root / path).resolve()
+        else:
+            path = path.resolve()
+            
         # Call validate_dat_file exactly as requested
         if not validate_dat_file(path):
             reason = _get_dat_validation_error_reason(path)
             logger.warning("Custom dat file %s failed validation: %s", path_str, reason)
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
                 detail={
                     "error": "Custom airfoil .dat file validation failed",
                     "file": path_str,
@@ -83,7 +84,6 @@ def create_design(request: DesignRequest):
             )
 
     # 2. Prepare inputs for the Phase 3 LangGraph design agent
-    # Map API keys to the agent's schema
     inputs = {
         "payload_kg": rules_req.payload_kg,
         "mtow_limit_kg": rules_req.MTOW_kg,
@@ -277,7 +277,7 @@ def create_design(request: DesignRequest):
 
     # Prepare response envelope
     design_id = str(uuid.uuid4())
-    created_at = datetime.datetime.utcnow().isoformat() + "Z"
+    created_at = datetime.datetime.now(datetime.UTC).isoformat().replace("+00:00", "") + "Z"
     
     airfoil_id = design["airfoil_id"]
     airfoil_selection_reasoning = f"{airfoil_id} selected: optimal L/D ratio and lift margin at target Re."
@@ -310,9 +310,244 @@ def create_design(request: DesignRequest):
         )
     except Exception as exc:
         logger.error("Failed to save design %s to SQLite: %s", design_id, exc)
-        # We don't fail the request since optimization completed, just log it
 
     return response_payload
+
+
+@router.post(
+    "/design",
+    response_model=DesignResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Optimize a new UAV design from competition rules",
+)
+async def create_design(request: DesignRequest):
+    """Triggers the LangGraph optimization agent to converge on a design spec
+    satisfying the given competition constraints.
+    """
+    rules_req = request.competition_rules
+    
+    # 1. Path whitelist validation (reject any path containing ".." or resolving outside data/user_airfoils/)
+    project_root = Path(__file__).resolve().parent.parent
+    whitelist_dir = (project_root / "data" / "user_airfoils").resolve()
+    
+    for path_str in rules_req.custom_airfoil_paths:
+        if ".." in path_str:
+            logger.warning("Custom dat file path %s contains '..'", path_str)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Access denied for airfoil path: path must not contain '..'",
+            )
+        
+        path = Path(path_str)
+        if not path.is_absolute():
+            resolved_path = (project_root / path).resolve()
+        else:
+            resolved_path = path.resolve()
+            
+        if not resolved_path.is_relative_to(whitelist_dir):
+            logger.warning("Custom dat file path %s resolves outside %s", path_str, whitelist_dir)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Access denied for airfoil path: path must be under data/user_airfoils/ directory",
+            )
+
+    # 2. Concurrency lock
+    if _design_lock.locked():
+        logger.warning("Rejecting concurrent design request: lock is already held")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Another design optimization run is currently in progress.",
+        )
+
+    async with _design_lock:
+        return await asyncio.to_thread(_run_design_optimization_sync, request)
+
+
+import queue
+import threading
+
+@router.post(
+    "/design/stream",
+    summary="Optimize a new UAV design and stream node-by-node execution progress",
+)
+async def create_design_stream(request: DesignRequest):
+    """Triggers the LangGraph optimization agent and returns a StreamingResponse
+    yielding Server-Sent Events (SSE) detailing node-by-node execution progress.
+    """
+    rules_req = request.competition_rules
+    
+    # 1. Path whitelist validation (reject any path containing ".." or resolving outside data/user_airfoils/)
+    project_root = Path(__file__).resolve().parent.parent
+    whitelist_dir = (project_root / "data" / "user_airfoils").resolve()
+    
+    for path_str in rules_req.custom_airfoil_paths:
+        if ".." in path_str:
+            logger.warning("Custom dat file path %s contains '..'", path_str)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Access denied for airfoil path: path must not contain '..'",
+            )
+        
+        path = Path(path_str)
+        if not path.is_absolute():
+            resolved_path = (project_root / path).resolve()
+        else:
+            resolved_path = path.resolve()
+            
+        if not resolved_path.is_relative_to(whitelist_dir):
+            logger.warning("Custom dat file path %s resolves outside %s", path_str, whitelist_dir)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Access denied for airfoil path: path must be under data/user_airfoils/ directory",
+            )
+
+    # 2. Concurrency lock
+    if _design_lock.locked():
+        logger.warning("Rejecting concurrent design request: lock is already held")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Another design optimization run is currently in progress.",
+        )
+
+    # Prepare inputs for the LangGraph design agent
+    inputs = {
+        "payload_kg": rules_req.payload_kg,
+        "mtow_limit_kg": rules_req.MTOW_kg,
+        "wingspan_limit_m": rules_req.max_wingspan_m,
+        "power_limit_W": rules_req.max_power_W,
+        "stall_speed_limit_ms": rules_req.min_stall_speed_ms,
+        "V_cruise_target_ms": rules_req.target_cruise_speed_ms,
+        "candidate_airfoils": list(DEFAULT_CANDIDATES) + rules_req.custom_airfoil_paths,
+        "max_iterations": request.max_iterations,
+        "use_llm": request.use_llm,
+    }
+
+    # Thread-safe queue and event callback
+    event_queue = queue.Queue()
+    airfoil_events = []
+    
+    def progress_callback(airfoil_id: str, status_str: str, details: dict):
+        airfoil_events.append({
+            "type": "airfoil_progress",
+            "airfoil_id": airfoil_id,
+            "status": status_str,
+            "details": details
+        })
+
+    inputs["progress_callback"] = progress_callback
+
+    def run_optimization_in_thread():
+        try:
+            workflow = build_graph()
+            app = workflow.compile()
+
+            final_state = {}
+            reasoning_by_iter = {}
+            airfoil_cl_max = {"clarky": 1.393, "n0012": 1.085} # seed defaults
+            airfoil_cd0 = {"clarky": 0.0102, "n0012": 0.0114}
+
+            event_queue.put({"type": "status", "message": "Starting UAV Design Optimization..."})
+
+            next_node = "ingest_rules"
+            event_queue.put({"type": "node_start", "node": next_node})
+
+            for chunk in app.stream(inputs):
+                for node_name, state_update in chunk.items():
+                    final_state.update(state_update)
+
+                    if node_name == "select_airfoil":
+                        airfoil_id = state_update.get("airfoil_id")
+                        if airfoil_id:
+                            if "CL_max" in state_update:
+                                airfoil_cl_max[airfoil_id] = state_update["CL_max"]
+                            if "CD0" in state_update:
+                                airfoil_cd0[airfoil_id] = state_update["CD0"]
+
+                    if node_name == "adjust_design":
+                        iter_num = state_update.get("iteration")
+                        reasoning = state_update.get("reasoning", "")
+                        reasoning_by_iter[iter_num] = reasoning
+
+                    # Drain any accumulated airfoil progress events
+                    while airfoil_events:
+                        evt = airfoil_events.pop(0)
+                        event_queue.put(evt)
+
+                    # Yield node completion event
+                    variables = {
+                        "MTOW_kg": final_state.get("MTOW_kg"),
+                        "span_m": final_state.get("span_m"),
+                        "wing_area_m2": final_state.get("wing_area_m2"),
+                        "V_cruise_ms": final_state.get("V_cruise_ms"),
+                        "CL_cruise": final_state.get("CL_cruise"),
+                        "CD_total": final_state.get("CD_total"),
+                        "power_required_W": final_state.get("power_required_W"),
+                        "stall_speed_ms": final_state.get("stall_speed_ms"),
+                        "airfoil_id": final_state.get("airfoil_id"),
+                        "converged": final_state.get("converged", False),
+                    }
+                    variables = {k: float(v) if isinstance(v, (int, float)) and not isinstance(v, bool) else v for k, v in variables.items()}
+
+                    event_queue.put({
+                        "type": "node_complete",
+                        "node": node_name,
+                        "iteration": int(final_state.get("iteration", 0)),
+                        "variables": variables
+                    })
+
+                    # Map next node
+                    if node_name == "ingest_rules":
+                        next_node = "seed_design"
+                    elif node_name == "seed_design":
+                        next_node = "evaluate_aero"
+                    elif node_name == "evaluate_aero":
+                        next_node = "select_airfoil"
+                    elif node_name == "select_airfoil":
+                        next_node = "check_constraints"
+                    elif node_name == "check_constraints":
+                        if final_state.get("converged") or final_state.get("iteration", 0) >= final_state.get("max_iterations", 10):
+                            next_node = "finalize_design"
+                        else:
+                            next_node = "adjust_design"
+                    elif node_name == "adjust_design":
+                        next_node = "evaluate_aero"
+                    elif node_name == "finalize_design":
+                        next_node = None
+
+                    if next_node:
+                        event_queue.put({"type": "node_start", "node": next_node})
+
+            # Optimization complete, map response payload
+            response_payload = _build_design_response(
+                final_state=final_state,
+                rules_req=rules_req,
+                inputs=inputs,
+                reasoning_by_iter=reasoning_by_iter,
+                airfoil_cl_max=airfoil_cl_max,
+                airfoil_cd0=airfoil_cd0
+            )
+
+            event_queue.put({"type": "complete", "result": response_payload})
+
+        except Exception as exc:
+            logger.error("Design stream execution failed: %s", exc, exc_info=True)
+            event_queue.put({"type": "error", "detail": str(exc)})
+        finally:
+            event_queue.put(None)
+
+    async def event_generator():
+        async with _design_lock:
+            thread = threading.Thread(target=run_optimization_in_thread)
+            thread.start()
+
+            loop = asyncio.get_running_loop()
+            while True:
+                evt = await loop.run_in_executor(None, event_queue.get)
+                if evt is None:
+                    break
+                yield f"data: {json.dumps(evt)}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 
 @router.get(

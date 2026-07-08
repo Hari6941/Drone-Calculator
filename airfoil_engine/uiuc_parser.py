@@ -17,7 +17,7 @@ import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.request import urlopen, urlretrieve
+from urllib.request import urlopen
 
 import numpy as np
 
@@ -445,7 +445,9 @@ def fetch_airfoil(
     if not dat_path.exists():
         url = f"{_UIUC_BASE_URL}/{airfoil_id}.dat"
         logger.info("Downloading %s → %s", url, raw_path)
-        urlretrieve(url, raw_path)
+        with urlopen(url) as response:
+            with open(raw_path, "wb") as f:
+                f.write(response.read())
     else:
         # Cached file exists but is not clean Selig — re-process it
         logger.info("Re-processing cached %s (not clean Selig)", dat_path)

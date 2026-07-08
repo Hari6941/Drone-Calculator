@@ -138,7 +138,7 @@ def test_post_design_validation_errors(client, tmp_path):
             "MTOW_kg": 3.0,
             "payload_kg": 1.0,
             "max_wingspan_m": 1.5,
-            "custom_airfoil_paths": [str(tmp_path / "nonexistent.dat")]
+            "custom_airfoil_paths": ["data/user_airfoils/nonexistent.dat"]
         }
     }
     resp = client.post("/api/v1/design", json=missing_file_payload)
@@ -147,17 +147,101 @@ def test_post_design_validation_errors(client, tmp_path):
     assert "does not exist" in resp.json()["detail"]["reason"]
     
     # 3. Custom dat validation failure: invalid chord length
-    bad_dat = tmp_path / "bad_chord.dat"
+    project_root = Path(__file__).resolve().parent.parent
+    whitelist_dir = project_root / "data" / "user_airfoils"
+    whitelist_dir.mkdir(parents=True, exist_ok=True)
+    bad_dat = whitelist_dir / "bad_chord.dat"
     bad_dat.write_text("Bad Chord Airfoil\n0.0 0.0\n0.2 0.02\n0.4 0.01\n0.2 -0.02\n0.0 0.0\n0.1 0.01\n0.1 -0.01\n0.3 0.01\n0.3 -0.01\n0.05 0.0\n")
-    bad_chord_payload = {
+    try:
+        bad_chord_payload = {
+            "competition_rules": {
+                "MTOW_kg": 3.0,
+                "payload_kg": 1.0,
+                "max_wingspan_m": 1.5,
+                "custom_airfoil_paths": ["data/user_airfoils/bad_chord.dat"]
+            }
+        }
+        resp = client.post("/api/v1/design", json=bad_chord_payload)
+        assert resp.status_code == 422
+        data = resp.json()["detail"]
+        assert "chord length" in data["reason"]
+    finally:
+        if bad_dat.exists():
+            bad_dat.unlink()
+
+
+def test_concurrency_lock(client):
+    """Verify that concurrent design optimization requests are rejected with a 429 status code."""
+    from unittest.mock import patch
+
+    with patch("api.routes._design_lock.locked", return_value=True):
+        payload = {
+            "competition_rules": {
+                "MTOW_kg": 4.0,
+                "payload_kg": 1.2,
+                "max_wingspan_m": 1.8,
+                "custom_airfoil_paths": []
+            }
+        }
+        response = client.post("/api/v1/design", json=payload)
+        assert response.status_code == 429
+        assert "Another design optimization run is currently in progress." in response.json()["detail"]
+
+
+def test_custom_path_whitelist_validation(client):
+    """Verify that custom airfoil paths are restricted to data/user_airfoils/ and reject path traversal."""
+    import os
+
+    # 1. Reject path containing '..' (should return 400 Bad Request)
+    payload_dotdot = {
         "competition_rules": {
-            "MTOW_kg": 3.0,
-            "payload_kg": 1.0,
-            "max_wingspan_m": 1.5,
-            "custom_airfoil_paths": [str(bad_dat)]
+            "MTOW_kg": 4.0,
+            "payload_kg": 1.2,
+            "max_wingspan_m": 1.8,
+            "custom_airfoil_paths": ["data/user_airfoils/../../etc/passwd"]
         }
     }
-    resp = client.post("/api/v1/design", json=bad_chord_payload)
-    assert resp.status_code == 422
-    data = resp.json()["detail"]
-    assert "chord length" in data["reason"]
+    response = client.post("/api/v1/design", json=payload_dotdot)
+    assert response.status_code == 400
+    assert "Access denied" in response.json()["detail"]
+
+    # 2. Reject path resolving outside data/user_airfoils/
+    outside_path = "C:/absolute/outside.dat" if os.name == "nt" else "/absolute/outside.dat"
+    payload_outside = {
+        "competition_rules": {
+            "MTOW_kg": 4.0,
+            "payload_kg": 1.2,
+            "max_wingspan_m": 1.8,
+            "custom_airfoil_paths": [outside_path]
+        }
+    }
+    response = client.post("/api/v1/design", json=payload_outside)
+    assert response.status_code == 400
+    assert "Access denied" in response.json()["detail"]
+
+    # 3. Allow valid path under data/user_airfoils/ (which fails with 422 because the file does not exist, not 400)
+    payload_valid = {
+        "competition_rules": {
+            "MTOW_kg": 4.0,
+            "payload_kg": 1.2,
+            "max_wingspan_m": 1.8,
+            "custom_airfoil_paths": ["data/user_airfoils/nonexistent.dat"]
+        }
+    }
+    response = client.post("/api/v1/design", json=payload_valid)
+    assert response.status_code == 422
+    assert "does not exist" in response.json()["detail"]["reason"]
+
+
+def test_cors_origins(client):
+    """Verify that CORS allow_origins is restricted to the localhost origins."""
+    # 1. Allowed Origin
+    headers_allowed = {"Origin": "http://localhost:5173"}
+    response = client.get("/", headers=headers_allowed)
+    assert response.headers.get("access-control-allow-origin") == "http://localhost:5173"
+
+    # 2. Disallowed Origin
+    headers_disallowed = {"Origin": "http://malicious.com"}
+    response = client.get("/", headers=headers_disallowed)
+    assert response.headers.get("access-control-allow-origin") is None
+

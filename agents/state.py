@@ -17,8 +17,7 @@ DEFAULT_CANDIDATES = [
     "ag03",
     "dae11",
     "n2412",
-    "s7055",
-    "ch10"
+    "s7055"
 ]
 
 @dataclass(frozen=True)
