@@ -102,4 +102,4 @@ The dashboard supports a **Mock Mode** (simulated responses, useful for UI devel
 
 ## Author
 
-Built by [Hari](https://github.com/Hari6941) — B.Tech Aerospace Engineering, targeting DRDO/HAL aerospace R&D roles.
+Built by [Hari](https://github.com/Hari6941) — B.Tech Aerospace Engineering.
