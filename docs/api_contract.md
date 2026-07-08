@@ -19,6 +19,7 @@ This mirrors the `finalize_design` output from the Phase 3 LangGraph layer (see 
     "KV_rating": 1000,
     "max_power_W": 500,
     "min_stall_speed_ms": null,
+    "target_cruise_speed_ms": 15.0,
     "custom_airfoil_paths": []
   },
   "use_llm": true,
@@ -29,7 +30,8 @@ This mirrors the `finalize_design` output from the Phase 3 LangGraph layer (see 
 | Field | Type | Notes |
 |---|---|---|
 | `competition_rules` | object | Maps to Phase 3's `CompetitionRules` dataclass. Add/remove fields here as competition inputs change — this is the single source of truth for what "input" means. |
-| `custom_airfoil_paths` | list[str] | UIUC airfoil IDs or paths to user-uploaded `.dat` files. Validated server-side via `validate_dat_file()` before use. |
+| `target_cruise_speed_ms` | float, optional | **Added during Phase 4 planning.** Required by the Phase 3 agent to initialize the aerodynamic solver but was missing from the original contract. Default `15.0` if omitted — this default lives here, in the contract, not buried in FastAPI code. |
+| `custom_airfoil_paths` | list[str] | UIUC airfoil IDs, or filesystem paths to `.dat` files **on the same machine running the FastAPI server** (local single-user tool, not a multi-user upload service — no multipart upload endpoint exists or is planned). Validated server-side via `validate_dat_file()` before use. |
 | `use_llm` | bool | `false` forces the deterministic fallback path in `adjust_design` (no Claude API call). Useful for CI/tests and for a "fast mode" toggle in the dashboard. |
 | `max_iterations` | int | Optional override of the default 10. |
 
