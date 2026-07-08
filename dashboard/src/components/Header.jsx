@@ -16,13 +16,13 @@ export default function Header({ mockMode, setMockMode, mockScenario, setMockSce
               value={mockScenario} 
               onChange={(e) => setMockScenario(e.target.value)}
               className="input-control"
-              style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 'auto', background: 'rgba(6, 182, 212, 0.1)', borderColor: 'rgba(6, 182, 212, 0.3)' }}
+              style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem', width: 'auto' }}
             >
               <option value="converged">Converged (Success)</option>
               <option value="best_effort">Best Effort (Max Iterations)</option>
               <option value="no_viable_airfoil">No Viable Airfoil (Failure)</option>
               <option value="validation_422">422 Custom Airfoil Reject</option>
-              <option value="bad_request_400">400 Bad Request</option>
+              <option value="bad_request_400">400 Bad Request (UI Robustness Test)</option>
               <option value="server_error_500">500 Server Error</option>
             </select>
           </div>
@@ -34,7 +34,18 @@ export default function Header({ mockMode, setMockMode, mockScenario, setMockSce
             onClick={() => setMockMode(true)}
             title="Use simulated backend payloads for offline development"
           >
-            <span style={{ display: 'inline-block', width: '6px', height: '6px', borderRadius: '50%', background: 'currentColor', marginRight: '4px' }}></span>
+            {mockMode && (
+              <span 
+                style={{ 
+                  display: 'inline-block', 
+                  width: '6px', 
+                  height: '6px', 
+                  borderRadius: '50%', 
+                  background: 'currentColor', 
+                  marginRight: '6px' 
+                }}
+              ></span>
+            )}
             MOCK MODE
           </button>
           <button 
@@ -42,6 +53,7 @@ export default function Header({ mockMode, setMockMode, mockScenario, setMockSce
             onClick={() => setMockMode(false)}
             title="Connect directly to the FastAPI server at /api/v1"
           >
+            {!mockMode && <span className="live-status-dot" style={{ marginRight: '6px' }}></span>}
             LIVE API
           </button>
         </div>

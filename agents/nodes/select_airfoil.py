@@ -20,6 +20,7 @@ def select_airfoil(state: DesignState) -> dict:
     candidates = state["candidate_airfoils"]
     CL_cruise = state["CL_cruise"]
     Re = state["Re"]
+    progress_callback = state.get("progress_callback")
 
     # We run XFOIL via filter_airfoils.
     # Note: XFOIL tests/runs skip if binary is missing. If skipped/failed,
@@ -31,6 +32,7 @@ def select_airfoil(state: DesignState) -> dict:
             Re=Re,
             min_CL_margin=0.3,
             max_thickness=0.20,
+            progress_callback=progress_callback,
         )
     except Exception as exc:
         logger.error("Error in filter_airfoils: %s", exc)

@@ -24,10 +24,7 @@ export default function ConvergenceTrace({ history, rules }) {
     const calculatedSpan = Math.sqrt(AR * S);
     const span_m = parseFloat(vars.span_m !== undefined ? vars.span_m : calculatedSpan);
 
-    // Calculate L_D_ratio if not present:
-    // CL = 2*W / (rho * V^2 * S)
-    // CD = CD0 + CL^2 / (pi * AR * e)
-    // LD = CL / CD
+    // Calculate L_D_ratio if not present
     let L_D_ratio = parseFloat(vars.L_D_ratio);
     if (isNaN(L_D_ratio)) {
       const V = parseFloat(vars.V_cruise_ms || 15.0);
@@ -115,17 +112,33 @@ export default function ConvergenceTrace({ history, rules }) {
           <span>Aerodynamic Efficiency vs. Wingspan Convergence</span>
           <div className="chart-legend">
             <div className="legend-item">
-              <span className="legend-color" style={{ background: 'var(--accent-cyan)' }}></span>
-              <span style={{ color: 'var(--accent-cyan)' }}>L/D Ratio</span>
+              <span className="legend-color" style={{ background: '#ffffff' }}></span>
+              <span style={{ color: '#ffffff' }}>L/D Ratio</span>
             </div>
             <div className="legend-item">
-              <span className="legend-color" style={{ background: 'var(--warning)', borderBottom: '1px dashed var(--warning)' }}></span>
-              <span style={{ color: 'var(--warning)' }}>Wingspan (m)</span>
+              <span className="legend-color" style={{ background: 'var(--text-secondary)', borderBottom: '1px dashed var(--text-secondary)' }}></span>
+              <span style={{ color: 'var(--text-secondary)' }}>Wingspan (m)</span>
             </div>
           </div>
         </div>
 
         <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="chart-svg">
+          <defs>
+            <clipPath id="chart-clip">
+              <rect x={paddingLeft} y="0" width="0" height={chartHeight}>
+                <animate
+                  attributeName="width"
+                  from="0"
+                  to={innerWidth}
+                  dur="1.2s"
+                  fill="freeze"
+                  calcMode="spline"
+                  keySplines="0.4 0 0.2 1"
+                  keyTimes="0 1"
+                />
+              </rect>
+            </clipPath>
+          </defs>
           {/* Grid lines (X & Y) */}
           {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
             const y = paddingTop + ratio * innerHeight;
@@ -207,8 +220,8 @@ export default function ConvergenceTrace({ history, rules }) {
           {/* Line paths */}
           {plotData.length > 1 && (
             <>
-              <path d={ldPath} className="chart-line-ld" />
-              <path d={spanPath} className="chart-line-span" />
+              <path d={ldPath} className="chart-line-ld" clipPath="url(#chart-clip)" />
+              <path d={spanPath} className="chart-line-span" clipPath="url(#chart-clip)" />
             </>
           )}
 
@@ -242,22 +255,22 @@ export default function ConvergenceTrace({ history, rules }) {
 
                 {/* Simple Tooltip on hovered point */}
                 {hoveredDot?.index === idx && (
-                  <g transform={`translate(${x > chartWidth - 120 ? x - 130 : x + 10}, ${yLd - 20})`} zIndex={100}>
+                  <g transform={`translate(${x > chartWidth - 130 ? x - 130 : x + 10}, ${yLd - 20})`} zIndex={100}>
                     <rect
                       width="120"
                       height="50"
-                      rx="6"
-                      fill="rgba(17, 24, 39, 0.95)"
-                      stroke="var(--border-color)"
+                      rx="0"
+                      fill="#0A0A0A"
+                      stroke="rgba(255, 255, 255, 0.25)"
                       strokeWidth="1"
                     />
-                    <text x="10" y="20" fill="var(--text-primary)" fontSize="10" fontFamily="var(--font-sans)" fontWeight="700">
-                      Step {d.iteration} Data
+                    <text x="10" y="18" fill="#ffffff" fontSize="9" fontFamily="var(--font-sans)" fontWeight="700">
+                      STEP {d.iteration} DATA
                     </text>
-                    <text x="10" y="32" fill="var(--accent-cyan)" fontSize="9" fontFamily="var(--font-mono)">
+                    <text x="10" y="30" fill="#ffffff" fontSize="9" fontFamily="var(--font-mono)">
                       L/D: {d.L_D_ratio.toFixed(2)}
                     </text>
-                    <text x="10" y="42" fill="var(--warning)" fontSize="9" fontFamily="var(--font-mono)">
+                    <text x="10" y="40" fill="var(--text-secondary)" fontSize="9" fontFamily="var(--font-mono)">
                       Span: {d.span_m.toFixed(2)}m
                     </text>
                   </g>
@@ -270,7 +283,7 @@ export default function ConvergenceTrace({ history, rules }) {
 
       {/* Vertical Stepper timeline */}
       <div>
-        <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
+        <h3 style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '0.75rem' }}>
           Iteration-by-Iteration Convergence Log
         </h3>
         <div className="trace-timeline">
@@ -312,16 +325,18 @@ export default function ConvergenceTrace({ history, rules }) {
                           style={{ 
                             fontSize: '0.75rem', 
                             padding: '0.4rem 0.6rem', 
-                            background: violation.severity === 'hard' ? 'rgba(239, 68, 68, 0.05)' : 'rgba(249, 115, 22, 0.05)',
-                            borderLeft: `2px solid ${violation.severity === 'hard' ? 'var(--danger)' : 'var(--warning)'}`,
-                            borderRadius: '0 4px 4px 0'
+                            background: 'transparent',
+                            border: `1px dashed ${violation.severity === 'hard' ? 'var(--accent-red)' : 'rgba(255, 255, 255, 0.15)'}`,
+                            color: violation.severity === 'hard' ? 'var(--accent-red)' : 'var(--text-secondary)',
+                            borderRadius: '0px',
+                            marginBottom: '0.25rem'
                           }}
                         >
-                          <strong style={{ color: violation.severity === 'hard' ? 'var(--danger)' : 'var(--warning)', textTransform: 'uppercase' }}>
+                          <strong style={{ textTransform: 'uppercase' }}>
                             {violation.severity} violation:
                           </strong>{' '}
                           {violation.parameter} limit is {violation.limit}, actual was {violation.actual}.
-                          <span style={{ display: 'block', fontStyle: 'italic', color: 'var(--text-secondary)', marginTop: '0.15rem' }}>
+                          <span style={{ display: 'block', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
                             💡 {violation.suggestion}
                           </span>
                         </div>

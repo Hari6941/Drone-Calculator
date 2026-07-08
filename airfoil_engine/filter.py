@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -94,6 +95,7 @@ def filter_airfoils(
     min_CL_margin: float = 0.3,
     max_thickness: float = 0.20,
     xfoil_path: str | None = None,
+    progress_callback: Callable[[str, str, dict], None] = None,
 ) -> list[AirfoilCandidate]:
     """Evaluate, filter, and rank candidate airfoils for a mission profile.
 
@@ -124,6 +126,7 @@ def filter_airfoils(
         min_CL_margin: Minimum required CL_max − CL_cruise.
         max_thickness: Maximum allowable thickness ratio.
         xfoil_path: Path to XFOIL executable (see run_xfoil).
+        progress_callback: Optional callback to stream status update for each candidate.
 
     Returns:
         Sorted list of AirfoilCandidate (best score first).
@@ -135,8 +138,10 @@ def filter_airfoils(
         try:
             logger.info("Evaluating %s at Re=%.0f, CL_cruise=%.3f",
                         airfoil_id, Re, CL_cruise)
+            if progress_callback:
+                progress_callback(airfoil_id, "evaluating", {"Re": Re, "CL_cruise": CL_cruise})
 
-            # 1. Fetch geometry
+            # 1. Geometry check
             geometry = fetch_airfoil(airfoil_id)
 
             # 2. Thickness filter
@@ -145,6 +150,11 @@ def filter_airfoils(
                     "  SKIP %s: thickness %.3f > max %.3f",
                     airfoil_id, geometry.thickness_ratio, max_thickness,
                 )
+                if progress_callback:
+                    progress_callback(airfoil_id, "skipped_thickness", {
+                        "thickness": float(geometry.thickness_ratio),
+                        "max_thickness": float(max_thickness)
+                    })
                 continue
 
             # 3. Run XFOIL
@@ -161,6 +171,12 @@ def filter_airfoils(
                     "  SKIP %s: CL_margin %.3f < min %.3f (CL_max=%.3f)",
                     airfoil_id, cl_margin, min_CL_margin, polar.CL_max,
                 )
+                if progress_callback:
+                    progress_callback(airfoil_id, "skipped_margin", {
+                        "cl_margin": float(cl_margin),
+                        "min_margin": float(min_CL_margin),
+                        "cl_max": float(polar.CL_max)
+                    })
                 continue
 
             # 5. Interpolate CD at cruise CL
@@ -170,6 +186,10 @@ def filter_airfoils(
                     "  SKIP %s: could not interpolate CD at CL=%.3f",
                     airfoil_id, CL_cruise,
                 )
+                if progress_callback:
+                    progress_callback(airfoil_id, "skipped_interpolate", {
+                        "cl_cruise": float(CL_cruise)
+                    })
                 continue
 
             # 6. Compute score
@@ -194,12 +214,21 @@ def filter_airfoils(
                 airfoil_id, ld_cruise, polar.CL_max,
                 geometry.thickness_ratio, score,
             )
+            if progress_callback:
+                progress_callback(airfoil_id, "passed", {
+                    "score": float(score),
+                    "L_D": float(ld_cruise),
+                    "CL_max": float(polar.CL_max),
+                    "CD_at_CL_cruise": float(cd_cruise)
+                })
             results.append(candidate)
 
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "  ERROR evaluating %s — skipping", airfoil_id, exc_info=True
             )
+            if progress_callback:
+                progress_callback(airfoil_id, "error", {"error": str(exc)})
             continue
 
     # Sort by score descending

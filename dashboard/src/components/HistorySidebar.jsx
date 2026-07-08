@@ -1,6 +1,6 @@
 import React from 'react';
 
-export default function HistorySidebar({ historyList, activeDesignId, onSelectDesign, onNewDesign }) {
+export default function HistorySidebar({ historyList, activeDesignId, onSelectDesign, onNewDesign, historyLoading }) {
   const formatDate = (isoString) => {
     try {
       const date = new Date(isoString);
@@ -29,7 +29,26 @@ export default function HistorySidebar({ historyList, activeDesignId, onSelectDe
       </div>
 
       <div className="history-list">
-        {historyList.length === 0 ? (
+        {historyLoading ? (
+          <>
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="skeleton-item">
+                <div className="skeleton-header">
+                  <div className="skeleton-line id-skeleton"></div>
+                  <div className="skeleton-line date-skeleton"></div>
+                </div>
+                <div className="skeleton-details">
+                  <div className="skeleton-line detail-skeleton"></div>
+                  <div className="skeleton-line detail-skeleton"></div>
+                </div>
+                <div className="skeleton-footer">
+                  <div className="skeleton-badge"></div>
+                  <div className="skeleton-airfoil"></div>
+                </div>
+              </div>
+            ))}
+          </>
+        ) : historyList.length === 0 ? (
           <div style={{ textAlign: 'center', padding: '2rem 1rem', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
             No recent design runs found.
           </div>

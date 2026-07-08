@@ -16,9 +16,30 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 let mockHistoryData = [...initialMockHistory];
 
 export const api = {
-  async runDesign(rules, useLlm, maxIterations, mockMode = true, mockScenario = 'converged') {
+  async runDesign(rules, useLlm, maxIterations, mockMode = true, mockScenario = 'converged', onProgress = () => {}) {
     if (mockMode) {
-      await delay(800); // Simulate network latency
+      const simulateEvent = async (evt, ms) => {
+        onProgress(evt);
+        await delay(ms);
+      };
+
+      await simulateEvent({ type: "status", message: "Initializing optimizer in Mock Mode..." }, 150);
+      await simulateEvent({ type: "node_start", node: "ingest_rules" }, 150);
+      await simulateEvent({ type: "node_complete", node: "ingest_rules", variables: { iteration: 0 } }, 150);
+
+      await simulateEvent({ type: "node_start", node: "seed_design" }, 150);
+      await simulateEvent({ type: "node_complete", node: "seed_design", variables: { iteration: 0, wing_area_m2: 0.85, aspect_ratio: 8.2, span_m: 2.64 } }, 150);
+
+      await simulateEvent({ type: "node_start", node: "evaluate_aero" }, 150);
+      await simulateEvent({ type: "node_complete", node: "evaluate_aero", variables: { iteration: 0, CL_cruise: 0.52, CD_total: 0.031 } }, 150);
+
+      await simulateEvent({ type: "node_start", node: "select_airfoil" }, 150);
+      await simulateEvent({ type: "airfoil_progress", airfoil_id: "clarky", status: "passed", details: { score: 16.8, L_D: 16.8, CL_max: 1.39 } }, 100);
+      await simulateEvent({ type: "airfoil_progress", airfoil_id: "n0012", status: "skipped_thickness", details: { thickness: 0.12 } }, 100);
+      await simulateEvent({ type: "airfoil_progress", airfoil_id: "s1223", status: "passed", details: { score: 14.2, L_D: 14.2, CL_max: 1.45 } }, 100);
+      await simulateEvent({ type: "node_complete", node: "select_airfoil", variables: { airfoil_id: "clarky" } }, 150);
+
+      await simulateEvent({ type: "node_start", node: "check_constraints" }, 150);
 
       const id = `design-${Math.random().toString(36).substr(2, 6)}`;
       const timestamp = new Date().toISOString();
@@ -26,7 +47,6 @@ export const api = {
       let result;
       switch (mockScenario) {
         case 'converged':
-          // Merge actual rules for display in results
           result = JSON.parse(JSON.stringify(mockConvergedResponse));
           result.design.MTOW_kg = Number(rules.MTOW_kg) || 5.0;
           break;
@@ -56,6 +76,11 @@ export const api = {
             err422.detail[0].msg = `Custom airfoil .dat file failed validate_dat_file(): coordinates count must be between 20 and 300. The uploaded file '${rules.custom_airfoil_paths[0]}' contains only 12 coordinate points.`;
           }
           return { ok: false, status: 422, data: err422 };
+        
+        // NOTE: bad_request_400 is unreachable via the Live API.
+        // This is because Pydantic handles backend request validation and returns a
+        // 422 Unprocessable Entity for missing or malformed request parameters.
+        // We keep it here as a pure UI-robustness test.
         case 'bad_request_400':
           return { ok: false, status: 400, data: mockBadRequest400 };
         case 'server_error_500':
@@ -77,11 +102,13 @@ export const api = {
       };
       mockHistoryData.unshift(newHistoryItem);
 
+      await simulateEvent({ type: "node_complete", node: "finalize_design", variables: { converged: result.converged } }, 150);
+
       return { ok: true, status: 200, data: result };
     }
 
     try {
-      const response = await fetch(`${API_BASE}/design`, {
+      const response = await fetch(`${API_BASE}/design/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -102,17 +129,59 @@ export const api = {
         }),
       });
 
-      const data = await response.json();
-      return {
-        ok: response.ok,
-        status: response.status,
-        data
-      };
+      if (!response.ok) {
+        const data = await response.json();
+        return {
+          ok: false,
+          status: response.status,
+          data
+        };
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+      let finalResult = null;
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        // Keep the last incomplete line in buffer
+        buffer = lines.pop();
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (trimmed.startsWith("data:")) {
+            try {
+              const eventData = JSON.parse(trimmed.slice(5).trim());
+              if (eventData.type === "complete") {
+                finalResult = eventData.result;
+              }
+              onProgress(eventData);
+            } catch (e) {
+              console.error("Failed to parse SSE line:", trimmed, e);
+            }
+          }
+        }
+      }
+
+      if (finalResult) {
+        return { ok: true, status: 200, data: finalResult };
+      } else {
+        return {
+          ok: false,
+          status: 500,
+          data: { detail: "Stream completed without yielding the final optimization result." }
+        };
+      }
     } catch (err) {
       return {
         ok: false,
         status: 500,
-        data: { detail: `Network connection failed: ${err.message}` }
+        data: { detail: `Network stream connection failed: ${err.message}` }
       };
     }
   },

@@ -15,7 +15,7 @@ export default function Toast({ error, success, onClose }) {
       message = error;
     } else if (error.detail) {
       if (Array.isArray(error.detail)) {
-        // FastPI validation error (422)
+        // FastAPI validation error (422)
         message = 'Input validation failed. Please check the parameters.';
         details = error.detail.map((err) => {
           const path = err.loc ? err.loc.join(' → ') : '';
@@ -33,32 +33,34 @@ export default function Toast({ error, success, onClose }) {
   }
 
   return (
-    <div className={`toast ${isError ? 'toast-error' : 'toast-success'}`}>
-      <div className="toast-icon">
-        {isError ? (
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+    <div className="toast-container">
+      <div className={`toast ${isError ? 'toast-error' : 'toast-success'}`}>
+        <div className="toast-icon">
+          {isError ? (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+            </svg>
+          ) : (
+            <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          )}
+        </div>
+        <div className="toast-content">
+          <div className="toast-title">{title}</div>
+          <div className="toast-msg">{message}</div>
+          {details && (
+            <div className="toast-details">
+              {details}
+            </div>
+          )}
+        </div>
+        <button className="toast-close" onClick={onClose} aria-label="Close message">
+          <svg style={{ width: '14px', height: '14px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
           </svg>
-        ) : (
-          <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-            <path strokeLinecap="round" strokeLinejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-          </svg>
-        )}
+        </button>
       </div>
-      <div className="toast-content">
-        <div className="toast-title">{title}</div>
-        <div className="toast-msg">{message}</div>
-        {details && (
-          <div className="toast-details">
-            {details}
-          </div>
-        )}
-      </div>
-      <button className="toast-close" onClick={onClose} aria-label="Close message">
-        <svg style={{ width: '16px', height: '16px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-          <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-        </svg>
-      </button>
     </div>
   );
 }

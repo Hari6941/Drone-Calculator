@@ -40,7 +40,7 @@ export default function DesignResults({ data }) {
   return (
     <div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
-        <h2 style={{ fontSize: '1.2rem', fontWeight: '700' }}>Active Optimization Output</h2>
+        <h2 style={{ fontSize: '1rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Active Optimization Output</h2>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', fontFamily: 'var(--font-mono)' }}>
             ITERATIONS: {iterations_used}
@@ -70,7 +70,7 @@ export default function DesignResults({ data }) {
 
           {design_variables && (
             <div className="variables-section">
-              <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+              <h3 style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                 Optimization Design Variables
               </h3>
               <table className="variables-table">
@@ -100,13 +100,13 @@ export default function DesignResults({ data }) {
           )}
         </>
       ) : (
-        <div className="empty-state" style={{ background: 'rgba(239, 68, 68, 0.02)', border: '1px dashed rgba(239, 68, 68, 0.2)', borderRadius: '12px' }}>
-          <div className="empty-state-icon" style={{ color: 'var(--danger)' }}>
-            <svg style={{ width: '48px', height: '48px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="1.5">
+        <div className="empty-state" style={{ background: 'transparent', border: '1px dashed var(--accent-red)' }}>
+          <div className="empty-state-icon" style={{ color: 'var(--accent-red)' }}>
+            <svg style={{ width: '36px', height: '36px' }} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
             </svg>
           </div>
-          <h3>Optimization Failed</h3>
+          <h3 style={{ color: 'var(--accent-red)' }}>Optimization Failed</h3>
           <p>
             No aerodynamic solution could be found matching the requested constraints. 
             Check the <strong>Convergence Trace</strong> tab to analyze how the parameters drifted.

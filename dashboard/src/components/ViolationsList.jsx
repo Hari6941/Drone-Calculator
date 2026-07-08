@@ -26,7 +26,7 @@ export default function ViolationsList({ violations }) {
           </div>
           {violation.suggestion && (
             <div className="violation-suggestion">
-              Suggestion: {violation.suggestion}
+              💡 {violation.suggestion}
             </div>
           )}
         </div>

@@ -6,6 +6,7 @@ import DesignResults from './components/DesignResults';
 import ConvergenceTrace from './components/ConvergenceTrace';
 import ViolationsList from './components/ViolationsList';
 import Toast from './components/Toast';
+import LiveProgressTracker from './components/LiveProgressTracker';
 import { api } from './services/api';
 
 export default function App() {
@@ -15,6 +16,8 @@ export default function App() {
   const [activeDesignId, setActiveDesignId] = useState(null);
   const [historyList, setHistoryList] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [streamProgress, setStreamProgress] = useState(null);
   
   // Toast state: { error: data_object } or { success: message_string }
   const [toastMessage, setToastMessage] = useState(null);
@@ -22,7 +25,9 @@ export default function App() {
 
   // Load history list on startup and when mockMode changes
   const loadHistory = useCallback(async () => {
+    setHistoryLoading(true);
     const res = await api.getHistory(mockMode);
+    setHistoryLoading(false);
     if (res.ok) {
       setHistoryList(res.data);
     } else {
@@ -42,7 +47,58 @@ export default function App() {
     // If not in history mode, reset activeDesignId
     setActiveDesignId(null);
 
-    const res = await api.runDesign(rules, useLlm, maxIterations, mockMode, mockScenario);
+    // Initialize stream progress state
+    setStreamProgress({
+      currentNode: null,
+      completedNodes: [],
+      logs: [],
+      airfoilEvaluations: {},
+      currentVariables: {}
+    });
+
+    const onProgress = (event) => {
+      setStreamProgress((prev) => {
+        if (!prev) return prev;
+        const updated = { ...prev };
+        
+        if (event.type === 'status') {
+          updated.logs = [...updated.logs, { text: event.message, type: 'status' }];
+        } else if (event.type === 'node_start') {
+          updated.currentNode = event.node;
+          updated.logs = [...updated.logs, { text: `Running node: ${event.node}...`, type: 'start' }];
+        } else if (event.type === 'node_complete') {
+          updated.completedNodes = [...updated.completedNodes, event.node];
+          if (event.variables) {
+            updated.currentVariables = { ...updated.currentVariables, ...event.variables };
+          }
+          updated.logs = [...updated.logs, { text: `Completed node: ${event.node}.`, type: 'complete' }];
+        } else if (event.type === 'airfoil_progress') {
+          updated.airfoilEvaluations = {
+            ...updated.airfoilEvaluations,
+            [event.airfoil_id]: { status: event.status, details: event.details }
+          };
+          
+          let logMsg = `Evaluating candidate: ${event.airfoil_id}...`;
+          if (event.status === 'passed') {
+            logMsg = `Passed candidate: ${event.airfoil_id} (Score: ${event.details?.score?.toFixed(2)}, L/D: ${event.details?.L_D?.toFixed(1)})`;
+          } else if (event.status === 'skipped_thickness') {
+            logMsg = `Skipped candidate: ${event.airfoil_id} (thickness ratio ${event.details?.thickness?.toFixed(3)} exceeds max ${event.details?.max_thickness})`;
+          } else if (event.status === 'skipped_margin') {
+            logMsg = `Skipped candidate: ${event.airfoil_id} (lift margin ${event.details?.cl_margin?.toFixed(3)} is below required ${event.details?.min_margin})`;
+          } else if (event.status === 'skipped_interpolate') {
+            logMsg = `Skipped candidate: ${event.airfoil_id} (failed to interpolate CD at target cruise CL)`;
+          } else if (event.status === 'error') {
+            logMsg = `Error evaluating candidate: ${event.airfoil_id} - ${event.details?.error}`;
+          }
+          updated.logs = [...updated.logs, { text: logMsg, type: 'airfoil' }];
+        }
+        return updated;
+      });
+    };
+
+    const res = await api.runDesign(rules, useLlm, maxIterations, mockMode, mockScenario, onProgress);
+    
+    setStreamProgress(null);
     setLoading(false);
 
     if (res.ok) {
@@ -90,8 +146,8 @@ export default function App() {
       setActiveTab('overview');
       setToastMessage({ success: `Loaded design ${id} successfully.` });
       
-      // Synchronize the dropdown to the loaded design's status in mock mode
-      if (mockMode && res.data.status) {
+      // Fix: Scenario dropdown must reflect the actual status of a loaded history entry, not stay stuck on last-selected value.
+      if (res.data.status) {
         setMockScenario(res.data.status);
       }
     } else {
@@ -117,6 +173,7 @@ export default function App() {
         activeDesignId={activeDesignId}
         onSelectDesign={handleSelectDesign}
         onNewDesign={handleNewDesign}
+        historyLoading={historyLoading}
       />
 
       <div className="main-content">
@@ -135,7 +192,9 @@ export default function App() {
 
           {/* Right panel: results display with tabs */}
           <div className="glass-card" style={{ minHeight: '500px' }}>
-            {activeDesign ? (
+            {streamProgress ? (
+              <LiveProgressTracker progress={streamProgress} />
+            ) : activeDesign ? (
               <>
                 <nav className="tabs-nav">
                   <button
@@ -158,7 +217,7 @@ export default function App() {
                   </button>
                 </nav>
 
-                <div className="tab-content">
+                <div className="tab-content tab-pane-transition" key={activeTab}>
                   {activeTab === 'overview' && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                       {/* Active violations list displayed at top of design */}
