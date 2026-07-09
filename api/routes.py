@@ -550,6 +550,23 @@ async def create_design_stream(request: DesignRequest):
                 airfoil_cd0=airfoil_cd0
             )
 
+            # Persist design to SQLite database (previously missing from the
+            # streaming endpoint — this is why Live API runs via /design/stream
+            # never appeared in history)
+            try:
+                save_design(
+                    design_id=response_payload["id"],
+                    created_at=response_payload["created_at"],
+                    payload_kg=rules_req.payload_kg,
+                    mtow_limit_kg=rules_req.MTOW_kg,
+                    wingspan_limit_m=rules_req.max_wingspan_m,
+                    status=response_payload["status"],
+                    converged=response_payload["converged"],
+                    response_json=json.dumps(response_payload),
+                )
+            except Exception as exc:
+                logger.error("Failed to save design %s to SQLite: %s", response_payload["id"], exc)
+
             event_queue.put({"type": "complete", "result": response_payload})
 
         except Exception as exc:
