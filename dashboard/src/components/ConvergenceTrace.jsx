@@ -1,7 +1,49 @@
 import React, { useState } from 'react';
+import { 
+  LineChart, 
+  Line, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  ReferenceLine 
+} from 'recharts';
+
+const CustomTooltip = ({ active, payload }) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div style={{
+        background: '#0A0A0A',
+        border: '1px dashed rgba(255, 255, 255, 0.25)',
+        padding: '0.6rem 0.8rem',
+        fontSize: '0.8rem',
+        fontFamily: 'var(--font-sans)',
+        color: '#ffffff'
+      }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, marginBottom: '0.3rem', textTransform: 'uppercase', color: 'var(--accent-cyan)' }}>
+          Step {data.iteration}
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
+          L/D Ratio: <span style={{ color: '#fff', fontWeight: 600 }}>{data.L_D_ratio.toFixed(2)}</span>
+        </div>
+        <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', marginBottom: '0.15rem' }}>
+          Wingspan: <span style={{ color: '#fff', fontWeight: 600 }}>{data.span_m.toFixed(2)}m</span>
+        </div>
+        {data.violations && data.violations.length > 0 && (
+          <div style={{ color: 'var(--status-danger)', fontSize: '0.7rem', marginTop: '0.3rem', fontWeight: 600 }}>
+            ⚠️ {data.violations.length} VIOLATION(S)
+          </div>
+        )}
+      </div>
+    );
+  }
+  return null;
+};
 
 export default function ConvergenceTrace({ history, rules }) {
-  const [hoveredDot, setHoveredDot] = useState(null); // { type, index }
+  const [hoveredStep, setHoveredStep] = useState(null);
 
   if (!history || history.length === 0) {
     return (
@@ -13,6 +55,7 @@ export default function ConvergenceTrace({ history, rules }) {
   }
 
   const MTOW = rules ? parseFloat(rules.MTOW_kg) || 5.0 : 5.0;
+  const wingspanLimit = rules ? parseFloat(rules.max_wingspan_m) || 2.0 : 2.0;
 
   // Helper to extract or calculate L_D_ratio and span_m for each step
   const plotData = history.map((step) => {
@@ -46,67 +89,18 @@ export default function ConvergenceTrace({ history, rules }) {
     };
   });
 
-  // SVG Chart Calculations
-  const chartWidth = 600;
-  const chartHeight = 220;
-  const paddingLeft = 50;
-  const paddingRight = 50;
-  const paddingTop = 20;
-  const paddingBottom = 30;
-
-  const innerWidth = chartWidth - paddingLeft - paddingRight;
-  const innerHeight = chartHeight - paddingTop - paddingBottom;
-
-  const iterations = plotData.map(d => d.iteration);
-  const minIter = iterations[0] || 1;
-  const maxIter = iterations[iterations.length - 1] || 1;
-  
-  // Scales
-  const getX = (iter) => {
-    if (maxIter === minIter) return paddingLeft + innerWidth / 2;
-    return paddingLeft + ((iter - minIter) / (maxIter - minIter)) * innerWidth;
-  };
-
-  // Left Y scale (L_D_ratio)
   const ldValues = plotData.map(d => d.L_D_ratio);
   const minLd = Math.max(0, Math.min(...ldValues) - 2);
   const maxLd = Math.max(...ldValues) + 2;
-  const getYLd = (ld) => {
-    if (maxLd === minLd) return paddingTop + innerHeight / 2;
-    return paddingTop + innerHeight - ((ld - minLd) / (maxLd - minLd)) * innerHeight;
-  };
 
-  // Right Y scale (span_m)
   const spanValues = plotData.map(d => d.span_m);
   const minSpan = Math.max(0, Math.min(...spanValues) - 0.5);
-  const maxSpan = Math.max(...spanValues) + 0.5;
-  const getYSpan = (span) => {
-    if (maxSpan === minSpan) return paddingTop + innerHeight / 2;
-    return paddingTop + innerHeight - ((span - minSpan) / (maxSpan - minSpan)) * innerHeight;
-  };
-
-  // Draw lines
-  let ldPath = '';
-  let spanPath = '';
-
-  plotData.forEach((d, i) => {
-    const x = getX(d.iteration);
-    const yLd = getYLd(d.L_D_ratio);
-    const ySpan = getYSpan(d.span_m);
-
-    if (i === 0) {
-      ldPath = `M ${x} ${yLd}`;
-      spanPath = `M ${x} ${ySpan}`;
-    } else {
-      ldPath += ` L ${x} ${yLd}`;
-      spanPath += ` L ${x} ${ySpan}`;
-    }
-  });
+  const maxSpan = Math.max(...spanValues, wingspanLimit) + 0.5;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
       
-      {/* SVG Convergence Chart */}
+      {/* Recharts Convergence Chart */}
       <div className="chart-container">
         <div className="chart-title">
           <span>Aerodynamic Efficiency vs. Wingspan Convergence</span>
@@ -122,163 +116,74 @@ export default function ConvergenceTrace({ history, rules }) {
           </div>
         </div>
 
-        <svg viewBox={`0 0 ${chartWidth} ${chartHeight}`} className="chart-svg">
-          <defs>
-            <clipPath id="chart-clip">
-              <rect x={paddingLeft} y="0" width="0" height={chartHeight}>
-                <animate
-                  attributeName="width"
-                  from="0"
-                  to={innerWidth}
-                  dur="1.2s"
-                  fill="freeze"
-                  calcMode="spline"
-                  keySplines="0.4 0 0.2 1"
-                  keyTimes="0 1"
-                />
-              </rect>
-            </clipPath>
-          </defs>
-          {/* Grid lines (X & Y) */}
-          {[0, 0.25, 0.5, 0.75, 1].map((ratio, idx) => {
-            const y = paddingTop + ratio * innerHeight;
-            return (
-              <line 
-                key={`grid-y-${idx}`}
-                x1={paddingLeft} 
-                y1={y} 
-                x2={chartWidth - paddingRight} 
-                y2={y} 
-                className="chart-grid-line"
+        <div style={{ width: '100%', height: 240 }}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart
+              data={plotData}
+              margin={{ top: 20, right: 10, left: 0, bottom: 5 }}
+              onMouseMove={(state) => {
+                if (state && state.activeTooltipIndex !== undefined) {
+                  setHoveredStep(plotData[state.activeTooltipIndex].iteration);
+                }
+              }}
+              onMouseLeave={() => {
+                setHoveredStep(null);
+              }}
+            >
+              <CartesianGrid stroke="rgba(255, 255, 255, 0.05)" strokeDasharray="2 2" />
+              <XAxis 
+                dataKey="iteration" 
+                stroke="var(--text-muted)" 
+                tick={{ fill: 'var(--text-muted)', fontSize: 9, fontFamily: 'var(--font-mono)', fontWeight: 'bold' }}
+                tickFormatter={(v) => `Step ${v}`}
               />
-            );
-          })}
-
-          {plotData.map((d, idx) => {
-            const x = getX(d.iteration);
-            return (
-              <line
-                key={`grid-x-${idx}`}
-                x1={x}
-                y1={paddingTop}
-                x2={x}
-                y2={paddingTop + innerHeight}
-                className="chart-grid-line"
+              <YAxis 
+                yAxisId="left"
+                domain={[minLd, maxLd]}
+                stroke="var(--text-muted)"
+                tick={{ fill: 'var(--text-primary)', fontSize: 9, fontFamily: 'var(--font-mono)' }}
+                label={{ value: 'L/D Ratio', angle: -90, position: 'insideLeft', offset: 12, fill: '#ffffff', fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 600 }}
               />
-            );
-          })}
-
-          {/* Left Y-axis ticks & labels (L/D) */}
-          {[minLd, (minLd + maxLd) / 2, maxLd].map((val, idx) => {
-            const y = getYLd(val);
-            return (
-              <text 
-                key={`tick-ld-${idx}`} 
-                x={paddingLeft - 10} 
-                y={y + 4} 
-                textAnchor="end" 
-                className="chart-axis-label"
-              >
-                {val.toFixed(1)}
-              </text>
-            );
-          })}
-
-          {/* Right Y-axis ticks & labels (Span) */}
-          {[minSpan, (minSpan + maxSpan) / 2, maxSpan].map((val, idx) => {
-            const y = getYSpan(val);
-            return (
-              <text 
-                key={`tick-span-${idx}`} 
-                x={chartWidth - paddingRight + 10} 
-                y={y + 4} 
-                textAnchor="start" 
-                className="chart-axis-label"
-              >
-                {val.toFixed(2)}m
-              </text>
-            );
-          })}
-
-          {/* X-axis labels (Iterations) */}
-          {plotData.map((d, idx) => {
-            const x = getX(d.iteration);
-            return (
-              <text
-                key={`tick-x-${idx}`}
-                x={x}
-                y={chartHeight - 10}
-                textAnchor="middle"
-                className="chart-axis-label"
-                style={{ fontWeight: 'bold' }}
-              >
-                Step {d.iteration}
-              </text>
-            );
-          })}
-
-          {/* Line paths */}
-          {plotData.length > 1 && (
-            <>
-              <path d={ldPath} className="chart-line-ld" clipPath="url(#chart-clip)" />
-              <path d={spanPath} className="chart-line-span" clipPath="url(#chart-clip)" />
-            </>
-          )}
-
-          {/* Interactivity & Dots */}
-          {plotData.map((d, idx) => {
-            const x = getX(d.iteration);
-            const yLd = getYLd(d.L_D_ratio);
-            const ySpan = getYSpan(d.span_m);
-
-            return (
-              <g key={`dots-${idx}`}>
-                {/* L/D Dot */}
-                <circle
-                  cx={x}
-                  cy={yLd}
-                  r={hoveredDot?.type === 'ld' && hoveredDot?.index === idx ? 6 : 4}
-                  className="chart-dot-ld"
-                  onMouseEnter={() => setHoveredDot({ type: 'ld', index: idx })}
-                  onMouseLeave={() => setHoveredDot(null)}
-                />
-                
-                {/* Span Dot */}
-                <circle
-                  cx={x}
-                  cy={ySpan}
-                  r={hoveredDot?.type === 'span' && hoveredDot?.index === idx ? 6 : 4}
-                  className="chart-dot-span"
-                  onMouseEnter={() => setHoveredDot({ type: 'span', index: idx })}
-                  onMouseLeave={() => setHoveredDot(null)}
-                />
-
-                {/* Simple Tooltip on hovered point */}
-                {hoveredDot?.index === idx && (
-                  <g transform={`translate(${x > chartWidth - 130 ? x - 130 : x + 10}, ${yLd - 20})`} zIndex={100}>
-                    <rect
-                      width="120"
-                      height="50"
-                      rx="0"
-                      fill="#0A0A0A"
-                      stroke="rgba(255, 255, 255, 0.25)"
-                      strokeWidth="1"
-                    />
-                    <text x="10" y="18" fill="#ffffff" fontSize="9" fontFamily="var(--font-sans)" fontWeight="700">
-                      STEP {d.iteration} DATA
-                    </text>
-                    <text x="10" y="30" fill="#ffffff" fontSize="9" fontFamily="var(--font-mono)">
-                      L/D: {d.L_D_ratio.toFixed(2)}
-                    </text>
-                    <text x="10" y="40" fill="var(--text-secondary)" fontSize="9" fontFamily="var(--font-mono)">
-                      Span: {d.span_m.toFixed(2)}m
-                    </text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
-        </svg>
+              <YAxis 
+                yAxisId="right"
+                orientation="right"
+                domain={[minSpan, maxSpan]}
+                stroke="var(--text-muted)"
+                tick={{ fill: 'var(--text-secondary)', fontSize: 9, fontFamily: 'var(--font-mono)' }}
+                label={{ value: 'Wingspan (m)', angle: 90, position: 'insideRight', offset: 5, fill: 'var(--text-secondary)', fontSize: 10, fontFamily: 'var(--font-display)', fontWeight: 600 }}
+              />
+              <Tooltip content={<CustomTooltip />} cursor={{ stroke: 'rgba(255, 255, 255, 0.05)', strokeWidth: 1 }} />
+              <ReferenceLine 
+                y={wingspanLimit} 
+                yAxisId="right" 
+                stroke="var(--accent-red)" 
+                strokeDasharray="3 3"
+                label={{ value: `Limit: ${wingspanLimit.toFixed(2)}m`, fill: 'var(--accent-red)', position: 'top', fontSize: 9, fontFamily: 'var(--font-mono)', offset: 5 }}
+              />
+              <Line 
+                yAxisId="left"
+                type="monotone" 
+                dataKey="L_D_ratio" 
+                stroke="#ffffff" 
+                strokeWidth={2}
+                activeDot={{ r: 6, stroke: '#ffffff', strokeWidth: 1 }}
+                dot={{ r: 4, stroke: '#ffffff', strokeWidth: 1, fill: '#000000' }}
+                animationDuration={300}
+              />
+              <Line 
+                yAxisId="right"
+                type="monotone" 
+                dataKey="span_m" 
+                stroke="var(--text-secondary)" 
+                strokeDasharray="3 3"
+                strokeWidth={2}
+                activeDot={{ r: 6, stroke: 'var(--text-secondary)', strokeWidth: 1 }}
+                dot={{ r: 4, stroke: 'var(--text-secondary)', strokeWidth: 1, fill: '#000000' }}
+                animationDuration={300}
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       </div>
 
       {/* Vertical Stepper timeline */}
@@ -293,7 +198,7 @@ export default function ConvergenceTrace({ history, rules }) {
             return (
               <div 
                 key={idx} 
-                className={`trace-step ${hasViolations ? 'has-violations' : ''}`}
+                className={`trace-step ${hasViolations ? 'has-violations' : ''} ${hoveredStep === step.iteration ? 'active-highlight' : ''}`}
               >
                 <div className="trace-node"></div>
                 <div className="trace-card">

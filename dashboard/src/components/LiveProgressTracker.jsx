@@ -1,4 +1,5 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { aeroTips } from '../data/aeroTips';
 
 const NODE_DISPLAY_NAMES = {
   ingest_rules: 'Ingest Rules',
@@ -20,8 +21,10 @@ const ALL_NODES = [
   'finalize_design'
 ];
 
-export default function LiveProgressTracker({ progress }) {
+export default function LiveProgressTracker({ progress, mockMode = true }) {
   const consoleEndRef = useRef(null);
+  const [tipIndex, setTipIndex] = useState(0);
+  const [tipVisible, setTipVisible] = useState(true);
 
   // Auto-scroll the logs terminal to the bottom when new logs arrive
   useEffect(() => {
@@ -29,6 +32,22 @@ export default function LiveProgressTracker({ progress }) {
       consoleEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [progress.logs]);
+
+  // Rotate tips every 4.5s during Live API run when waiting for airfoil select
+  useEffect(() => {
+    if (mockMode || Object.keys(progress.airfoilEvaluations || {}).length > 0) return;
+
+    const interval = setInterval(() => {
+      setTipVisible(false);
+      const timer = setTimeout(() => {
+        setTipIndex((prev) => (prev + 1) % aeroTips.length);
+        setTipVisible(true);
+      }, 250);
+      return () => clearTimeout(timer);
+    }, 4500);
+
+    return () => clearInterval(interval);
+  }, [mockMode, progress.airfoilEvaluations]);
 
   const { currentNode, completedNodes, logs, airfoilEvaluations, currentVariables } = progress;
 
@@ -72,7 +91,9 @@ export default function LiveProgressTracker({ progress }) {
                 <span className="node-label">{NODE_DISPLAY_NAMES[node]}</span>
               </div>
               {idx < ALL_NODES.length - 1 && (
-                <div className={`flow-connector ${isCompleted ? 'connector-completed' : ''} ${isActive ? 'connector-active' : ''}`} />
+                <div className="flow-connector">
+                  <div className={`flow-connector-inner ${isCompleted ? 'completed' : ''} ${isActive ? 'active' : ''}`} />
+                </div>
               )}
             </React.Fragment>
           );
@@ -84,7 +105,23 @@ export default function LiveProgressTracker({ progress }) {
         {/* Left Side: Airfoil Candidate Status Radar */}
         <div className="tracker-card">
           <h4 className="tracker-card-title">Airfoil Candidate Evaluations</h4>
-          {Object.keys(airfoilEvaluations).length === 0 ? (
+          {!mockMode && Object.keys(airfoilEvaluations).length === 0 ? (
+            <div className="building-uav-container">
+              <div className="uav-wireframe-container">
+                <svg viewBox="0 0 100 60" className="uav-wireframe">
+                  <path d="M 10 25 L 50 20 L 90 25 L 50 30 Z" className="wireframe-wing" />
+                  <path d="M 50 5 L 53 10 L 53 50 L 50 55 L 47 50 L 47 10 Z" className="wireframe-fuselage" />
+                  <path d="M 35 50 L 50 48 L 65 50 L 50 53 Z" className="wireframe-tail" />
+                </svg>
+              </div>
+              <div className="uav-fact-box">
+                <div className="uav-fact-header">UAV Engineering Fact</div>
+                <div className="uav-fact-text" style={{ opacity: tipVisible ? 1 : 0 }}>
+                  {aeroTips[tipIndex]}
+                </div>
+              </div>
+            </div>
+          ) : Object.keys(airfoilEvaluations).length === 0 ? (
             <div className="empty-radar">
               Waiting for select_airfoil node...
             </div>

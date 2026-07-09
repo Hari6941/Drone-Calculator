@@ -1,6 +1,30 @@
 import React from 'react';
 
-export default function DesignResults({ data }) {
+export default function DesignResults({ data, loading }) {
+  if (loading) {
+    return (
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+          <h2 style={{ fontSize: '1rem', fontWeight: '700', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Loading Design Details...</h2>
+          <div className="dot-matrix-loader" style={{ color: 'var(--accent-cyan)' }}>
+            <span className="dot"></span>
+            <span className="dot"></span>
+            <span className="dot"></span>
+          </div>
+        </div>
+        <div className="metric-skeleton-grid">
+          {Array.from({ length: 10 }).map((_, idx) => (
+            <div key={idx} className="metric-skeleton-card">
+              <div className="skeleton-pulse skeleton-label"></div>
+              <div className="skeleton-pulse skeleton-val"></div>
+              <div className="skeleton-pulse skeleton-unit"></div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
   if (!data) return null;
 
   const { status, iterations_used, design, design_variables } = data;

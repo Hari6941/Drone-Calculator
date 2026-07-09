@@ -8,6 +8,7 @@ import ViolationsList from './components/ViolationsList';
 import Toast from './components/Toast';
 import LiveProgressTracker from './components/LiveProgressTracker';
 import { api } from './services/api';
+import { airfoilGeometries } from './data/airfoilGeometry';
 
 export default function App() {
   const [mockMode, setMockMode] = useState(true);
@@ -193,7 +194,7 @@ export default function App() {
           {/* Right panel: results display with tabs */}
           <div className="glass-card" style={{ minHeight: '500px' }}>
             {streamProgress ? (
-              <LiveProgressTracker progress={streamProgress} />
+              <LiveProgressTracker progress={streamProgress} mockMode={mockMode} />
             ) : activeDesign ? (
               <>
                 <nav className="tabs-nav">
@@ -222,14 +223,14 @@ export default function App() {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
                       {/* Active violations list displayed at top of design */}
                       <ViolationsList violations={activeDesign.violations} />
-                      <DesignResults data={activeDesign} />
+                      <DesignResults data={activeDesign} loading={loading} />
                     </div>
                   )}
 
                   {activeTab === 'trace' && (
                     <ConvergenceTrace 
                       history={activeDesign.history} 
-                      rules={activeDesign.design ? { MTOW_kg: activeDesign.design.MTOW_kg } : null}
+                      rules={activeDesign.competition_rules}
                     />
                   )}
 
@@ -238,6 +239,41 @@ export default function App() {
                       <h3 style={{ fontSize: '0.95rem', fontWeight: '700', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
                         Airfoil Search & Decisions
                       </h3>
+                      
+                      {activeDesign.design?.airfoil_id && (
+                        <div className="glass-card" style={{ display: 'flex', gap: '1.5rem', alignItems: 'center', background: 'rgba(0, 0, 0, 0.25)', marginBottom: '0.5rem', flexWrap: 'wrap' }}>
+                          <div style={{ flex: '1 1 250px' }}>
+                            <h4 style={{ fontSize: '0.85rem', fontWeight: '700', color: 'var(--text-primary)', marginBottom: '0.25rem', textTransform: 'uppercase' }}>
+                              Selected Airfoil Profile: {activeDesign.design.airfoil_id}
+                            </h4>
+                            <p style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', lineHeight: '1.4' }}>
+                              The Selig 2D profile coordinates are parsed and rendered here at a 1:1 aspect ratio to visualize the camber line and relative thickness.
+                            </p>
+                          </div>
+                          
+                          <div style={{ background: '#000000', border: '1px dashed rgba(255, 255, 255, 0.15)', padding: '0.5rem', position: 'relative', width: '310px', height: '110px' }}>
+                            {airfoilGeometries[activeDesign.design.airfoil_id] ? (
+                              <svg width="290" height="90" viewBox="0 0 310 110" style={{ display: 'block' }}>
+                                {/* Chord Line */}
+                                <line x1="15" y1="55" x2="295" y2="55" stroke="rgba(255, 255, 255, 0.15)" strokeDasharray="3 3" />
+                                <text x="18" y="50" fill="var(--text-muted)" fontSize="8" fontFamily="var(--font-mono)">CHORD LINE</text>
+                                {/* Airfoil shape */}
+                                <polygon 
+                                  points={airfoilGeometries[activeDesign.design.airfoil_id].map(([x, y]) => `${15 + x * 280},${55 - y * 280}`).join(' ')} 
+                                  fill="rgba(6, 182, 212, 0.08)" 
+                                  stroke="var(--accent-cyan)" 
+                                  strokeWidth="1.5" 
+                                />
+                              </svg>
+                            ) : (
+                              <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                Geometry preview unavailable for custom airfoil
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
                       {activeDesign.airfoil_selection_reasoning && (
                         <div className="reasoning-text">
                           <strong>Selection Reasoning:</strong>

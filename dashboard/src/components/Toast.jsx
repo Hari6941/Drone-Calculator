@@ -1,9 +1,27 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 
 export default function Toast({ error, success, onClose }) {
-  if (!error && !success) return null;
+  const [visible, setVisible] = useState(false);
+  const [internalError, setInternalError] = useState(null);
+  const [internalSuccess, setInternalSuccess] = useState(null);
 
-  const isError = !!error;
+  useEffect(() => {
+    if (error || success) {
+      setInternalError(error);
+      setInternalSuccess(success);
+      // Wait one frame to trigger the transition
+      const timer = setTimeout(() => {
+        setVisible(true);
+      }, 10);
+      return () => clearTimeout(timer);
+    } else {
+      setVisible(false);
+    }
+  }, [error, success]);
+
+  if (!internalError && !internalSuccess) return null;
+
+  const isError = !!internalError;
   const title = isError ? 'Execution Error' : 'Success';
   
   // Format error messages nicely
@@ -11,30 +29,41 @@ export default function Toast({ error, success, onClose }) {
   let details = null;
 
   if (isError) {
-    if (typeof error === 'string') {
-      message = error;
-    } else if (error.detail) {
-      if (Array.isArray(error.detail)) {
+    const errObj = internalError;
+    if (typeof errObj === 'string') {
+      message = errObj;
+    } else if (errObj.detail) {
+      if (Array.isArray(errObj.detail)) {
         // FastAPI validation error (422)
         message = 'Input validation failed. Please check the parameters.';
-        details = error.detail.map((err) => {
+        details = errObj.detail.map((err) => {
           const path = err.loc ? err.loc.join(' → ') : '';
           return `${path ? `[${path}]: ` : ''}${err.msg}`;
         }).join('\n');
       } else {
         // Generic detail error
-        message = error.detail;
+        message = errObj.detail;
       }
     } else {
       message = 'An unexpected error occurred. Please try again.';
     }
   } else {
-    message = success;
+    message = internalSuccess;
   }
+
+  const handleTransitionEnd = () => {
+    if (!visible) {
+      setInternalError(null);
+      setInternalSuccess(null);
+    }
+  };
 
   return (
     <div className="toast-container">
-      <div className={`toast ${isError ? 'toast-error' : 'toast-success'}`}>
+      <div 
+        className={`toast ${isError ? 'toast-error' : 'toast-success'} ${visible ? 'visible' : 'hidden'}`}
+        onTransitionEnd={handleTransitionEnd}
+      >
         <div className="toast-icon">
           {isError ? (
             <svg fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
